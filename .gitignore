@@ -1,0 +1,14 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.positai
+.DS_Store
+Rplots.pdf
+*.tar.gz
+*.Rcheck/
+_dev/HANDOFF.html
+.progress-runs/
+README.html
+/figure/
+R/.RDataTmp

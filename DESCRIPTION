@@ -1,0 +1,53 @@
+Package: discoverHTE
+Title: Discover Heterogeneous Effects of Continuous Exposures
+Version: 0.1.0
+Authors@R: c(
+    person("Falco J.", "Bargagli-Stoffi",
+           email = "falco@ucla.edu", role = c("aut", "cph"),
+           comment = c(ORCID = "0000-0002-6131-8165")),
+    person("Noah", "Greifer",
+           email = "ngreifer@iq.harvard.edu", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0003-3067-7154")),
+    person("Duy", "Pham",
+           email = "duympham@ucla.edu", role = c("aut"),
+           comment = c(ORCID = "0009-0007-6825-1761")))
+Description: Estimates exposure-response functions (ERFs), also called causal
+    dose-response curves, for continuous exposures, and discovers interpretable subgroups
+    across which they differ. The ERF is estimated using the doubly
+    robust estimator of Kennedy et al. (2017) <doi:10.1111/rssb.12212>, with the nuisance
+    functionals fit by generalized linear models, generalized additive models for
+    location, scale, and shape, stacked learners, or Bayesian additive regression trees.
+    Recursive partitioning then splits the sample into subgroups that maximize a measure
+    of the difference between their ERFs, producing a tree in which each node carries its
+    own exposure-response curve.
+License: GPL (>= 2)
+URL: https://github.com/fbargaglistoffi/discoverHTE
+BugReports: https://github.com/fbargaglistoffi/discoverHTE/issues
+Encoding: UTF-8
+Depends: R (>= 4.1.0)
+Imports: 
+    arg (>= 0.2.1),
+    cli (>= 3.6.6),
+    Formula (>= 1.2-6),
+    collapse,
+    rlang,
+    ggplot2 (>= 3.5.0),
+    stats,
+    splines,
+    utils
+Suggests:
+    adrftools,
+    bartisan,
+    SuperLearner,
+    testthat (>= 3.0.0),
+    gamlss,
+    gamlss.dist,
+    mgcv,
+    mvtnorm,
+    ggside,
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+Config/roxygen2/version: 8.1.1
+Roxygen: list(markdown = TRUE)

@@ -1,0 +1,45 @@
+template:
+  bootstrap: 5
+
+reference:
+- title: Estimating an exposure-response function
+  desc: >
+    Estimate the ERF for a continuous exposure, adjusting for measured covariates, and
+    display it.
+  contents:
+  - estimate_erf
+  - plot.erf
+  - update.erf
+
+- title: Nuisance estimation
+  desc: >
+    How the conditional outcome mean and the conditional density of exposure are
+    estimated. One of these is passed to the `method` argument of `estimate_erf()`.
+  contents:
+  - erf_methods
+
+- title: Discovering heterogeneity
+  desc: >
+    Partition the sample into subgroups whose exposure-response functions differ, grow
+    the tree honestly on one part of the sample and estimate its curves on the other, and
+    read the resulting tree.
+  contents:
+  - rpart_erf
+  - honest_erf_tree
+  - refit_erf_tree
+  - split_sample
+  - summary.erf_tree
+  - plot.erf_tree
+  - "`[[.erf_tree`"
+  - plot.erf_node
+
+- title: Package
+  contents:
+  - discoverHTE-package
+
+articles:
+- title: Articles
+  navbar: ~
+  contents:
+  - discoverHTE
+  - negbinomcens

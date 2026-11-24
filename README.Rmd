@@ -1,0 +1,149 @@
+---
+output: github_document
+---
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  comment = "#>",
+  fig.width = 5.5,
+  fig.height = 3.5,
+  fig.align = "center",
+  message = FALSE,
+  fig.path = "man/figures/README-"
+)
+options(digits = 4)
+```
+
+# discoverHTE
+
+<!-- badges: start -->
+<!-- badges: end -->
+
+*discoverHTE* estimates what a continuous exposure does on average, and then asks whether
+it does the same thing to everyone. The exposure-response function (ERF), also called a
+causal dose-response curve, describes how the expected outcome changes as the exposure
+moves across its range with the measured covariates held fixed. `estimate_erf()` estimates
+it using the doubly robust estimator of Kennedy et al. (2017), and `rpart_erf()` then
+searches a set of candidate effect modifiers for the subgroups whose ERFs differ most,
+returning a tree in which each node carries its own dose-response curve.
+
+Estimating the curve and partitioning on it are separate steps on purpose. The ERF is fit
+once, with whatever nuisance models suit the data, and the tree is grown from that fit
+without re-estimating anything, so the same curve can be partitioned several ways at
+little cost.
+
+## Installation
+
+Install *discoverHTE* from GitHub:
+
+``` r
+pak::pak("fbargaglistoffi/discoverHTE")
+```
+
+## Estimating an exposure-response function
+
+`estimate_erf()` takes a two-part formula: the outcome on the left, then the exposure and
+the covariates separated by a `|`. Everything to the right of the `|` is adjusted for.
+Here the exposure is the log of blood lead level among 2521 children, and the outcome is a
+mathematics test score.
+
+```{r example}
+library(discoverHTE)
+
+data("nhanes3lead", package = "adrftools")
+
+erf <- estimate_erf(Math ~ logBLL | Age + Male + PIR + Smoke_in_Home + Race,
+                    data = nhanes3lead)
+
+erf
+```
+
+Plotting the result draws the curve, a simultaneous confidence band, and the distribution
+of the exposure along the top.
+
+```{r plot-erf, fig.alt = "Estimated exposure-response function for mathematics score against log blood lead level, falling steadily from about 8.7 to 6.2 points across the observed exposure range, with a simultaneous confidence band and a rug of the exposure distribution along the top."}
+plot(erf)
+```
+
+The curve falls across the whole range, so a higher blood lead level is associated with a
+lower score throughout rather than only above some threshold.
+
+The `erf` component of the fitted object evaluates the curve wherever you ask and returns
+the estimates with their covariance.
+
+```{r evaluate}
+est <- erf$erf(c(0, 3))
+
+est$est
+```
+
+Moving from a log blood lead level of 0 to 3 is associated with a drop of about
+`r round(diff(range(erf$erf(c(0, 3), vcov = FALSE)$est)), 1)` points on a test scored out
+of 20.
+
+How the two nuisance functionals are estimated is set by the `method` argument.
+`method_glm()`, the default, uses generalized linear models. `method_superlearner()` stacks
+several learners, `method_gamlss()` models the whole conditional distribution of each
+variable, `method_bartisan()` uses Bayesian additive regression trees, and
+`method_negbinomcens()` handles count outcomes with interval-censored cells.
+
+## Finding subgroups whose curves differ
+
+`rpart_erf()` takes the fitted ERF and a one-sided formula naming the candidate effect
+modifiers. At each node it searches every candidate split and keeps the one whose two
+subgroup ERFs differ most, measured by the `metric` argument.
+
+```{r tree}
+tr <- rpart_erf(erf, ~ Male + Race + PIR + Smoke_in_Home,
+                max_depth = 3, min_samples = 100)
+
+summary(tr)
+```
+
+Plotting the tree draws a panel at every internal node, each showing the ERFs of that
+node's two children.
+
+```{r plot-tree, fig.width = 7, fig.height = 5, fig.alt = "The fitted tree, with a panel at each internal node showing the two child subgroup exposure-response curves overlaid, arranged in the shape of the tree."}
+plot(tr)
+```
+
+Any single node can be lifted out with `[[` and plotted on its own, with its branch path
+as the subtitle.
+
+```{r plot-node, fig.alt = "Exposure-response function for the node containing children with a poverty-income ratio below 2.69, shown on its own with its branch path as the subtitle."}
+plot(tr[[2]], density = FALSE)
+```
+
+The ERF is a confirmatory estimate, with influence-function standard errors that are
+cluster-robust where clustering is supplied. A tree grown and evaluated on the same data
+is not. It searches many candidate splits and keeps the best, so the bands at its nodes
+do not pay for that search. `honest_erf_tree()` grows the tree on one half of the sample
+and estimates the ERF at each of its nodes on the other half, so the bands at its nodes
+are valid given the tree.
+
+```{r honest}
+set.seed(1234)
+ht <- honest_erf_tree(Math ~ logBLL | Age + Male + PIR + Smoke_in_Home + Race,
+                      data = nhanes3lead, modifiers = ~ Male + Race + PIR + Smoke_in_Home,
+                      max_depth = 2, min_samples = 100)
+
+summary(ht)
+```
+
+## Learn more
+
+`vignette("discoverHTE")` covers the package's features in order, from bandwidth selection
+and cross-fitting to derivative ERFs, the objective functions available for splitting, and
+honest trees.
+`vignette("negbinomcens")` illustrates the count model with simulated county-level
+data, age-specific population denominators, and suppressed cells. For the application to
+fine particulate matter and mortality, see [the methods paper](https://arxiv.org/abs/2611.30838).
+
+## Reference
+
+Kennedy, E. H., Ma, Z., McHugh, M. D., & Small, D. S. (2017). Non-parametric methods for
+doubly robust estimation of continuous treatment effects. *Journal of the Royal
+Statistical Society: Series B*, 79(4), 1229-1245.
+<https://doi.org/10.1111/rssb.12212>

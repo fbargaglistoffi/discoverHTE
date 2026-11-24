@@ -1,0 +1,374 @@
+---
+title: "Discovering heterogeneous effects of a continuous exposure"
+author: "Noah Greifer"
+date: "`r Sys.Date()`"
+output:
+    html_vignette:
+      toc: true
+vignette: >
+  %\VignetteIndexEntry{Discovering heterogeneous effects of a continuous exposure}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown_notangle}
+bibliography: references.bib
+link-citations: true
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 5.5,
+  fig.height = 3.5,
+  fig.align = "center"
+)
+options(digits = 4)
+```
+
+*discoverHTE* estimates what a continuous exposure does on average, and then asks
+whether it does the same thing to everyone. The exposure-response function (ERF)
+describes how the expected outcome changes as the exposure moves across its range with
+the measured covariates held fixed, and `estimate_erf()` estimates it. `rpart_erf()`
+then searches a set of candidate effect modifiers for subgroups whose ERFs differ,
+returning a tree whose nodes each carry their own dose-response curve.
+
+Estimating the curve and partitioning on it are separate steps on purpose. The ERF is estimated once, with whatever nuisance
+models suit the data, and the tree is then grown from that fit without re-estimating
+anything. This vignette walks through both, using the `nhanes3lead` dataset from
+*adrftools*: blood lead level and a mathematics test score for 2,521 children.
+
+```{r}
+library(discoverHTE)
+
+data("nhanes3lead", package = "adrftools")
+
+head(nhanes3lead[c("Math", "logBLL", "Age", "Male", "PIR", "Race")])
+```
+
+The exposure is `logBLL`, the log of blood lead level in µg/dL, and the outcome is
+`Math`. The remaining variables are the covariates we will adjust for.
+
+# Estimating an exposure-response function
+
+`estimate_erf()` takes a two-part formula: the outcome on the left, then the exposure and
+the covariates separated by a `|`. Everything to the right of the `|` is adjusted for.
+
+```{r}
+erf <- estimate_erf(Math ~ logBLL | Age + Male + PIR + Smoke_in_Home + Race,
+                    data = nhanes3lead)
+
+erf
+```
+
+The estimator is the doubly robust one of @kennedyNonparametricMethodsDoubly2017. It
+forms a pseudo-outcome from two nuisance functionals, the conditional mean of the outcome
+and the conditional density of the exposure, and then smooths that pseudo-outcome against
+the exposure with a local linear regression. Being doubly robust means the ERF is
+consistent when either nuisance model is correct, not only when both are.
+
+The most useful part of the returned `<erf>` object is its `erf` component, a function
+that evaluates the curve wherever we ask and returns the estimates with their covariance.
+
+```{r}
+est <- erf$erf(c(0, 1, 2, 3))
+
+est$est
+
+sqrt(diag(est$vcov))
+```
+
+Lead is associated with a lower score throughout: moving from a log blood lead level of 0
+to 3 is associated with a drop of about
+`r round(diff(range(erf$erf(c(0, 3), vcov = FALSE)$est)), 1)` points on a test whose
+scores run from 0 to 20.
+
+## The bandwidth
+
+The local linear regression needs a bandwidth, and selecting it by leave-one-out
+cross-validation is usually the slowest part of a call. The bandwidth that was used is
+stored on the object.
+
+```{r}
+erf$bw
+```
+
+Passing a number to `bw` skips the search, and passing a function applies it as a rule of
+thumb. When we only want to re-smooth an ERF we have already fit, `update()` does that
+without fitting the nuisance models again, which is much faster than a fresh call.
+
+```{r}
+erf_smooth <- update(erf, bw = 2 * erf$bw)
+
+erf_smooth$bw
+```
+
+# Displaying the ERF
+
+Plotting an `<erf>` draws the curve, a confidence band, and the distribution of the
+exposure along the top.
+
+```{r}
+plot(erf)
+```
+
+The band is simultaneous by default, meaning it covers the whole curve at the stated
+level rather than each point separately. A simultaneous band is the one to read when
+making a claim about the shape of the curve, since a pointwise band understates how much
+of the curve could be consistent with the data. Pointwise bands are available with
+`simultaneous = FALSE`, and `conf_level = 0` omits the band entirely.
+
+```{r}
+plot(erf, simultaneous = FALSE, density = FALSE)
+```
+
+The result is a `<ggplot>` object, so it takes the usual *ggplot2* additions.
+
+```{r}
+library(ggplot2)
+
+plot(erf, density = FALSE) +
+  labs(title = "Blood lead and mathematics score",
+       x = "log blood lead level", y = "Expected score")
+```
+
+# Choosing how the nuisances are estimated
+
+The `method` argument decides how the two nuisance functionals are estimated, and is
+where most of the modeling judgment goes. Each `method_*()` function returns an
+`<erf_method>` object that `estimate_erf()` then calls.
+
+`method_glm()`, the default, fits generalized linear models: a linear model for the
+exposure, and for the outcome a linear model with a natural cubic spline on the exposure.
+It is fast and a reasonable starting point, but it commits to a parametric form for both
+nuisances.
+
+`method_superlearner()` stacks several learners and chooses the combination with the best
+cross-validated prediction error, which avoids committing to one form. Because the
+stacking is cross-validated, a seed is needed for replicability.
+
+```{r eval = rlang::is_installed("SuperLearner")}
+set.seed(1234)
+
+erf_sl <- estimate_erf(Math ~ logBLL | Age + Male + PIR + Smoke_in_Home + Race,
+                       data = nhanes3lead,
+                       method = method_superlearner(
+                         SL.library = c("SL.mean", "SL.glm", "SL.rpart")))
+
+erf_sl
+```
+
+`method_gamlss()` models the whole conditional distribution of each variable rather than
+only its mean, which matters when the exposure density is skewed. `method_bartisan()`
+uses Bayesian additive regression trees, and reads the exposure density directly off the
+fitted response distribution rather than recovering it from standardized residuals.
+`method_negbinomcens()` handles count outcomes measured over several observations per
+unit with interval-censored cells, and is the subject of
+`vignette("negbinomcens")`.
+
+Arguments reach the underlying models through `outcome` and `exposure`. One point is
+worth care: `exposure` defaults to `outcome`, so a family chosen for the outcome is
+handed to the exposure model as well unless we say otherwise.
+
+```{r}
+nhanes3lead$Math_count <- round(nhanes3lead$Math)
+
+erf_pois <- estimate_erf(Math_count ~ logBLL | Age + Male + PIR + Race,
+                         data = nhanes3lead,
+                         method = method_glm(outcome = list(family = poisson()),
+                                             exposure = list(family = gaussian())))
+
+erf_pois
+```
+
+# Inference
+
+Several arguments control how the standard errors are formed.
+
+`crossfit` splits the sample into folds, fits the nuisance models on all but one fold and
+evaluates them on the one held out, then rotates. This removes the bias that comes from
+using the same observations to fit the nuisance models and to evaluate them, which is
+what makes the influence-function standard errors trustworthy when flexible learners are
+used.
+
+`cluster` names a clustering variable, and puts it to two uses: it computes a
+cluster-robust variance, and it forms the cross-fitting folds over whole clusters so that
+no observation's nuisance prediction is trained on its own cluster-mates. Only one
+clustering variable is allowed, because the folds need a single partition of the sample
+to follow.
+
+```{r}
+erf_cf <- estimate_erf(Math ~ logBLL | Age + Male + PIR + Smoke_in_Home + Race,
+                       data = nhanes3lead, crossfit = 5)
+
+sqrt(diag(erf_cf$erf(1, vcov = TRUE)$vcov))
+```
+
+`trim` caps the ratio of the marginal to the conditional exposure density when the
+pseudo-outcome is formed. Where the conditional density is very small the ratio can be
+enormous and a handful of units come to dominate the fit, so the default of `0.99` caps
+it at its 99th percentile. Setting `trim = 1` disables it.
+
+Sampling weights are supplied through `weights`, either as a vector or as the name of a
+column in `data`. `nhanes3lead` carries the NHANES examination weight.
+
+```{r}
+erf_wt <- estimate_erf(Math ~ logBLL | Age + Male + PIR + Smoke_in_Home + Race,
+                       data = nhanes3lead, weights = "MEC_wt")
+
+erf_wt$erf(1, vcov = FALSE)$est
+```
+
+## The derivative of the ERF
+
+Sometimes the quantity of interest is not the curve but its slope: how much the expected
+outcome changes per unit of exposure at each point. Setting `d = 1` estimates that
+derivative directly, with standard errors on the same scale.
+
+```{r}
+erf_slope <- estimate_erf(Math ~ logBLL | Age + Male + PIR + Smoke_in_Home + Race,
+                          data = nhanes3lead, d = 1)
+
+plot(erf_slope, density = FALSE) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(y = "Change in expected score per unit of log blood lead")
+```
+
+A derivative is harder to estimate than the curve itself, so the band is wide. Where it
+covers zero, the data are consistent with the ERF being flat at that exposure. The degree
+of the local polynomial follows `d`, and the bandwidth is selected for that degree, so an
+ERF and its derivative do not generally share a bandwidth.
+
+# Partitioning the sample
+
+`rpart_erf()` takes a fitted `<erf>` and a one-sided formula naming the candidate effect
+modifiers, and splits the sample recursively. At each node it searches every candidate
+split and keeps the one whose two subgroup ERFs differ most.
+
+```{r}
+tr <- rpart_erf(erf, ~ Male + Race + PIR + Smoke_in_Home,
+                max_depth = 3, min_samples = 100)
+
+tr
+```
+
+The measure of "differ most" is the `metric` argument. `"L2"`, the default, integrates
+the squared difference between the two branch ERFs over the exposure range; `"L1"` uses
+the absolute difference, `"AUC"` the difference in areas under the two curves, and
+`"fANOVA"` each branch's squared deviation from the parent. `"AUC"` responds to a
+difference in level, while `"L2"` and `"L1"` also respond to a difference in shape, so
+two curves that cross can score high on `"L2"` and near zero on `"AUC"`.
+
+`int_weight_method` decides where over the exposure range those differences count. Both
+`"density"` and `"gps"` weight by the product of the two branches' exposure densities,
+which concentrates the objective where both subgroups actually have exposure mass and
+keeps a split from being rewarded for extrapolating into a region only one subgroup
+occupies. `"none"` weights the range uniformly, which gives the exposure tails more say
+and so tends to surface differences in slope.
+
+A continuous modifier has to be cut into candidate groups before it can be split on, and
+two arguments control that. `cont_var_splits` sets how many groups, and `split_type` sets
+where the cuts fall: `"quantile"`, the default, puts roughly the same number of units in
+each group, while `"range"` spaces the cuts evenly on the scale of the modifier. The two
+differ once a modifier is skewed, where even spacing can leave a group holding very few
+units. A unit missing the modifier a split is made on goes to the right branch, and the
+candidate cut points are read off the observed values alone.
+
+# Reading the tree
+
+`summary()` draws the tree. Each node is numbered, labeled with the split it descends
+from, and annotated with its size; a leaf is marked with `*`.
+
+```{r}
+summary(tr)
+```
+
+The numbers come from a depth-first walk that counts every node, leaves included, and
+they are the positions everything else uses. `tree[[i]]` extracts the ERF at node `i` as
+a thin `<erf>` that can be plotted on its own.
+
+```{r}
+tr[[2]]
+```
+
+```{r}
+plot(tr[[2]], density = FALSE)
+```
+
+The subtitle is the node's branch path, so a node ERF lifted out of its tree still says
+which subgroup it describes.
+
+Plotting the tree itself draws a panel at every internal node, each showing the ERFs of
+that node's two children, positioned according to the shape of the tree.
+
+```{r fig.width = 7, fig.height = 5}
+plot(tr)
+```
+
+`type` sets the shape of the output: `"tree"` for the single plot above, or `"list"`
+for the panels separately, named by the node numbers `summary()` shows. `panels` sets
+what each panel contains: `"children"` for one curve per child, as the tree above draws,
+or `"marginal"` for the node's own single ERF, which gives every node a panel including
+the leaves.
+
+```{r}
+panels <- plot(tr, type = "list")
+
+names(panels)
+
+panels[["1"]]
+```
+
+A marginal panel shows the same curve that `plot(tr[[i]])` draws, so the two views are
+consistent with one another.
+
+# Honest trees
+
+The ERF itself is a confirmatory estimate: cross-fit, with influence-function standard
+errors, and cluster-robust where clustering is supplied. A tree grown and evaluated on
+the same data is not. It searches many candidate splits and keeps the best, so the
+subgroup bands at its nodes do not pay for that search and are narrower than honest bands
+would be. The split points in particular are unstable; a modifier that appears high in
+the tree is more trustworthy than the exact threshold it was split at.
+
+`honest_erf_tree()` separates the search from the estimation. It splits the sample in
+two, estimates an ERF on each half, grows the tree on one of them, and then estimates the
+ERF at every node of that tree on the other, which played no part in choosing the splits.
+Given the tree, the bands at its nodes then have the same standing as the band of an ERF
+estimated on a subgroup fixed in advance. The arguments are those of `estimate_erf()` and
+`rpart_erf()` together, plus `frac`, the fraction of the sample used for discovery.
+
+```{r}
+set.seed(1234)
+
+ht <- honest_erf_tree(Math ~ logBLL | Age + Male + PIR + Smoke_in_Home + Race,
+                      data = nhanes3lead,
+                      modifiers = ~ Male + Race + PIR + Smoke_in_Home,
+                      max_depth = 3, min_samples = 100)
+
+ht
+```
+
+The result is an `<erf_tree>` whose node sizes and node ERFs come from the inference
+half, so `summary()`, `[[`, and `plot()` read it as before. The tree the search found on
+the discovery half is kept as its `discovery` component, and each internal node carries
+the value of the split objective on both samples.
+
+```{r}
+summary(ht)
+
+c(discovery = ht$tree$metric_discovery, inference = ht$tree$metric)
+```
+
+The objective is smaller on the inference sample, which is the search's optimism made
+visible: the split was chosen because its estimated difference was the largest among the
+candidates, and an independent sample gives an estimate of the same difference free of
+that selection. The two phases can be run separately with `split_sample()`,
+`estimate_erf()`, `rpart_erf()`, and `refit_erf_tree()`, which is useful when the
+discovery tree should be inspected before anything is estimated on the inference sample;
+`vignette("negbinomcens")` does so.
+
+The price is sample size: each half has less power than the whole, so an honest tree
+finds fewer splits and draws wider bands than the same tree grown on everything. Treat an
+unsplit tree as a way of generating hypotheses about who is most affected, and an honest
+one as the way to estimate the curves of the subgroups it proposes.
+
+# References

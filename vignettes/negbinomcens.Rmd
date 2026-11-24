@@ -1,0 +1,84 @@
+---
+title: "Count outcomes with suppressed cells"
+author: "Noah Greifer"
+date: "`r Sys.Date()`"
+output:
+    html_vignette:
+      toc: true
+vignette: >
+  %\VignetteIndexEntry{Count outcomes with suppressed cells}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown_notangle}
+bibliography: references.bib
+link-citations: true
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 6,
+  fig.height = 4,
+  fig.align = "center",
+  eval = rlang::is_installed(c("mgcv"))
+)
+options(digits = 4)
+```
+
+This example estimates an age-standardized exposure-response curve from simulated
+county mortality counts. Exposure is measured once per county-year, while counts and
+population denominators are reported separately for three age groups. The simulation
+suppresses counts between 1 and 9 to illustrate how to fit the model when the exact
+outcome is unavailable. All counties, exposures, and counts below are simulated.
+
+## Simulate county-year counts
+
+```{r simulate}
+library(discoverHTE)
+
+set.seed(2026)
+units <- expand.grid(county = seq_len(60), year = 1:3)
+units$unit <- seq_len(nrow(units))
+units$x <- rnorm(nrow(units))
+units$exposure <- 10 + 0.6 * units$x + rnorm(nrow(units), sd = 1.5)
+
+ages <- c("65-74", "75-84", "85+")
+panel <- units[rep(seq_len(nrow(units)), each = length(ages)), ]
+panel$age <- factor(rep(ages, nrow(units)), levels = ages)
+panel$population <- sample(1200:3500, nrow(panel), replace = TRUE)
+rate <- exp(-5.8 + 0.35 * (as.integer(panel$age) - 1) +
+              0.05 * (panel$exposure - 10) + 0.12 * panel$x)
+count <- rnbinom(nrow(panel), mu = panel$population * rate, size = 10)
+suppressed <- count >= 1 & count <= 9
+panel$deaths <- ifelse(suppressed, NA_integer_, count)
+panel$lo <- ifelse(suppressed, 1L, count)
+panel$hi <- ifelse(suppressed, 9L, count)
+table(suppressed)
+```
+
+## Estimate the curve
+
+Pass the age group, population denominator, county-year identifier, and censoring
+bounds to `method_negbinomcens()`. Exact counts have identical lower and upper
+bounds. Suppressed counts enter the model through their interval. The outcome model
+uses the age-specific counts and offsets, and the exposure-response curve is estimated
+at the county-year level. Supply the county identifier to `estimate_erf()` to account
+for repeated observations within counties.
+
+```{r fit}
+fit <- estimate_erf(
+  deaths ~ exposure | x, data = panel,
+  method = method_negbinomcens(
+    age = "age", population = "population", unit = "unit",
+    censor_lo = "lo", censor_hi = "hi", k_exposure = 5L, k_conf = 5L
+  ),
+  cluster = ~county, bw = 1, n = 30L
+)
+fit$erf(c(9, 11))$est
+```
+
+The two estimates are age-standardized rates per 100,000 at simulated exposure
+levels of 9 and 11. The [methods paper](https://arxiv.org/abs/2611.30838)
+describes the empirical study and its data sources. The study draws on mortality counts from [CDC WONDER](https://wonder.cdc.gov/),
+particulate matter estimates from the [Atmospheric Composition Analysis Group](https://sites.wustl.edu/acag/datasets/),
+and county covariates from the [American Community Survey](https://www.census.gov/programs-surveys/acs).

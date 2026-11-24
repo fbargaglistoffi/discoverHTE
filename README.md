@@ -23,6 +23,8 @@ data, and the tree is grown from that fit without re-estimating
 anything, so the same curve can be partitioned several ways at little
 cost.
 
+The package was developed by Falco J. Bargagli-Stoffi in collaboration with Noah Greifer, Duy Pham, and Kevin P. Josey.
+
 ## Installation
 
 Install *discoverHTE* from GitHub:
@@ -175,7 +177,11 @@ functions available for splitting, and honest trees.
 data, age-specific population denominators, and suppressed cells. For the application to
 fine particulate matter and mortality, see [the methods paper](https://arxiv.org/abs/2611.30838).
 
-## Reference
+## References
+
+Bargagli-Stoffi, F. J., Pham, D., Kennedy, E. H., Shin, H., Greifer, N., Josey, K. P., & Nethery, R. C. (2026).
+Interpretable Discovery of Heterogeneous Causal Dose-Response Curves. *arXiv*, 2611.30838.
+<https://arxiv.org/abs/2611.30838>
 
 Kennedy, E. H., Ma, Z., McHugh, M. D., & Small, D. S. (2017).
 Non-parametric methods for doubly robust estimation of continuous

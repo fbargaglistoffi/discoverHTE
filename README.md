@@ -23,7 +23,7 @@ data, and the tree is grown from that fit without re-estimating
 anything, so the same curve can be partitioned several ways at little
 cost.
 
-The package was developed by Falco J. Bargagli-Stoffi in collaboration with Noah Greifer, Duy Pham, and Kevin P. Josey.
+The package was developed by Falco J. Bargagli-Stoffi, Noah Greifer, Duy Pham and Kevin P. Josey.
 
 ## Installation
 
